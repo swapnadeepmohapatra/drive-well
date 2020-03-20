@@ -1,0 +1,2 @@
+rootProject.name='DriveWell'
+include ':app'
