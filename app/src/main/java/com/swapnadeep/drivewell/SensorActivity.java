@@ -9,7 +9,11 @@ import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.os.Bundle;
+import android.util.Log;
+import android.view.View;
+import android.widget.Button;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.text.DecimalFormat;
 import java.text.NumberFormat;
@@ -19,28 +23,19 @@ import java.util.TimerTask;
 
 public class SensorActivity extends AppCompatActivity implements SensorEventListener {
 
-    // for gryo
     public static final float EPSILON = 0.000000001f;
     public static final int TIME_CONSTANT = 10;
     private static final float NS2S = 1.0f / 1000000000.0f;
-    TextView sPitch, sRoll, sYaw;
     String displayPitch = "", displayRoll = "", displayYaw = "";
     int count = 0;
     float pitchOut, rollOut, yawOut;
-    // counter for sensor fusion
     int overYaw = 0;
     int overPitch = 0;
-    //    int underYaw = 0;
-//    int underPitch = 0;
-    //counter for quaternion
     int overYawQ = 0;
     int overPitchQ = 0;
-    //    int underYawQ = 0;
-//    int underPitchQ = 0;
 
     int finalOverYaw = 0;
     int finalOverPitch = 0;
-    //counter for accelerometer reading
     int overX = 0;
     int overY = 0;
     float[] mMagneticField;
@@ -52,17 +47,13 @@ public class SensorActivity extends AppCompatActivity implements SensorEventList
     Float getPitchQ = 0f;
     Float getRollQ = 0f;
     Float getYawQ = 0f;
-    // normal - sensor fusion, Q - denotes quaternion
     Float newPitchOut;
     Float newRollOut;
     Float newYawOut;
-    //    int underX = 0;
-//    int underY = 0;
     Float newPitchOutQ;
     Float newRollOutQ;
     Float newYawOutQ;
     float mPitch, mRoll, mYaw;
-    // for accelerometer
     float xAccelerometer;
     float yAccelerometer;
     float zAccelerometer;
@@ -73,23 +64,15 @@ public class SensorActivity extends AppCompatActivity implements SensorEventList
     float yAccCalibrated;
     float zAccCalibrated;
     boolean writeCheck = false;
-    TextView textOverYaw, textOverPitch, textOverYawQ, textOverPitchQ, textOverX, textOverY;
+    TextView textOverYaw, textOverPitch;
     private SensorManager mSensorManager = null;
-    // angular speeds from gyro
     private float[] gyro = new float[3];
-    // rotation matrix from gyro data
     private float[] gyroMatrix = new float[9];
-    // orientation angles from gyro matrix
     private float[] gyroOrientation = new float[3];
-    // magnetic field vector
     private float[] magnet = new float[3];
-    // accelerometer vector
     private float[] accel = new float[3];
-    // orientation angles from accel and magnet
     private float[] accMagOrientation = new float[3];
-    // final orientation angles from sensor fusion
     private float[] fusedOrientation = new float[3];
-    // accelerometer and magnetometer based rotation matrix
     private float[] rotationMatrix = new float[9];
     private float timestamp;
     private boolean initState = true;
@@ -97,15 +80,43 @@ public class SensorActivity extends AppCompatActivity implements SensorEventList
     private String SHARED_PREF_NAME = "driverbehaviorapp";
     private boolean mInitialized = false;
 
+    private Button calibrate_btn;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_sensor);
-        textOverX = (TextView) findViewById(R.id.x_over_counter);
-        textOverY = (TextView) findViewById(R.id.y_over_counter);
-        textOverYaw = (TextView) findViewById(R.id.yaw_over_counter);
-        textOverPitch = (TextView) findViewById(R.id.pitch_over_counter);
 
+        textOverYaw = findViewById(R.id.yaw_over_counter);
+        textOverPitch = findViewById(R.id.pitch_over_counter);
+
+        calibrate_btn = findViewById(R.id.calibrate_btn);
+
+        initVar();
+
+        // get sensorManager and initialise sensor listeners
+        mSensorManager = (SensorManager) this.getSystemService(SENSOR_SERVICE);
+        initListeners();
+        // wait for one second until gyroscope and magnetometer/accelerometer
+        // data is initialised then schedule the complementary filter task
+        fuseTimer.scheduleAtFixedRate(new calculateFusedOrientationTask(),
+                3000, TIME_CONSTANT);
+
+        calibrate_btn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                Toast.makeText(SensorActivity.this, "Sensor Calibrated", Toast.LENGTH_SHORT).show();
+//                initVar();
+//                initListeners();
+
+                overYaw = 0;
+                overPitch = 0;
+            }
+        });
+
+    }
+
+    public void initVar() {
         gyroOrientation[0] = 0.0f;
         gyroOrientation[1] = 0.0f;
         gyroOrientation[2] = 0.0f;
@@ -120,19 +131,6 @@ public class SensorActivity extends AppCompatActivity implements SensorEventList
         gyroMatrix[6] = 0.0f;
         gyroMatrix[7] = 0.0f;
         gyroMatrix[8] = 1.0f;
-
-        sPitch = (TextView) findViewById(R.id.pitch);
-        sRoll = (TextView) findViewById(R.id.roll);
-        sYaw = (TextView) findViewById(R.id.yaw);
-
-        // get sensorManager and initialise sensor listeners
-        mSensorManager = (SensorManager) this.getSystemService(SENSOR_SERVICE);
-        initListeners();
-        // wait for one second until gyroscope and magnetometer/accelerometer
-        // data is initialised then scedule the complementary filter task
-        fuseTimer.scheduleAtFixedRate(new calculateFusedOrientationTask(),
-                3000, TIME_CONSTANT);
-
     }
 
     public void initListeners() {
@@ -230,52 +228,27 @@ public class SensorActivity extends AppCompatActivity implements SensorEventList
     private void updateValues() {
         if (!displayPitch.equals("") && !displayRoll.equals("") && !displayYaw.equals("")) {
             writeCheck = false;
-            sPitch.setText(displayPitch);
-            sRoll.setText(displayRoll);
-            sYaw.setText(displayYaw);
+
             count++;
 
             if (newYawOut > .30 || newYawOut < -.30) {
                 overYaw = overYaw + 1;
                 writeCheck = true;
-            } else {
-//                underYaw = underYaw + 1;
             }
 
             if (newPitchOut > .12 || newPitchOut < -.12) {
                 overPitch = overPitch + 1;
                 writeCheck = true;
-            } else {
-//                underPitch = underPitch + 1;
             }
 
             if (newYawOutQ > .30 || newYawOutQ < -.30) {
                 overYawQ = overYawQ + 1;
                 writeCheck = true;
-            } else {
             }
 
             if (newPitchOutQ > .12 || newPitchOutQ < -.12) {
                 overPitchQ = overPitchQ + 1;
                 writeCheck = true;
-            } else {
-//                underPitchQ = underPitchQ + 1;
-            }
-
-            if (xAccCalibrated > 3 || xAccCalibrated < -3) {
-                overX = overX + 1;
-                textOverX.setText(d.format(overX));
-                writeCheck = true;
-            } else {
-//                 underX = underX + 1;
-            }
-
-            if (yAccCalibrated > 2.5 || yAccCalibrated < -2.5) {
-                overY = overY + 1;
-                textOverY.setText(d.format(overY));
-                writeCheck = true;
-            } else {
-//                 underY = underY+1;
             }
 
             // computing final values for pitch and yaw counters
@@ -331,7 +304,7 @@ public class SensorActivity extends AppCompatActivity implements SensorEventList
 
         // initialisation of the gyroscope based rotation matrix
         if (initState) {
-            float[] initMatrix = new float[9];
+            float[] initMatrix;
             initMatrix = getRotationMatrixFromOrientation(accMagOrientation);
             float[] test = new float[3];
             SensorManager.getOrientation(initMatrix, test);
